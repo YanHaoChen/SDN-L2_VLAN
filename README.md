@@ -12,6 +12,30 @@
 
 * 以 table 分層管理規則。（過濾、分配、學習）
 
+## Table 轉送邏輯
+
+```python
+# table 0 (過濾)
+if 由主幹進入的封包，封包的來源主機在此 switch 中:
+	# 預防 switch 間迴圈問題
+	drop
+else:
+	goto table 1
+
+# table 1（分配）
+if 來源主機的在管轄內，且無 VLAN tag:
+	加入對應的 VLAN tag
+	goto table 2
+else:
+	goto controller
+
+# table 2（學習）
+if 目的主機在此 switch 中，且 VLAN tag 正確:
+	去除 VLAN tag 轉送至目的主機
+else:
+	goto controller
+```
+
 
 # Version
 
