@@ -12,31 +12,6 @@
 
 * 以 table 分層管理規則。（過濾、分配、學習）
 
-## 虛擬環境配置
-
-* controller：1 台。
-* switch：3 台。
-* host：4 台。
-* VLAN 20：h1（00:00:00:00:00:01）、h2（00:00:00:00:00:02）。
-* VLAN 30：h3（00:00:00:00:00:03）、h4（00:00:00:00:00:04）。
-* switch 1 連接 h1（主幹：30、40）。
-* switch 2 連接 h2（主幹：30、40）。
-* switch 3 連接 h3 及 h4（主幹：30、50）。
-* switch 間透過主幹互相連接。
-
-### Mininet 環境
-```python
-mininet> net
-h1 h1-eth0:s1-eth1
-h2 h2-eth0:s2-eth1
-h3 h3-eth0:s3-eth1
-h4 h4-eth0:s3-eth2
-s1 lo:  s1-eth1:h1-eth0 s1-eth30:s2-eth30 s1-eth40:s3-eth50
-s2 lo:  s2-eth1:h2-eth0 s2-eth30:s1-eth30 s2-eth40:s3-eth30
-s3 lo:  s3-eth1:h3-eth0 s3-eth2:h4-eth0 s3-eth30:s2-eth40 s3-eth50:s1-eth40
-c0
-```
-
 ## Table 轉送邏輯
 
 ```python
@@ -61,9 +36,35 @@ else:
 	goto controller
 ```
 
+
+## 虛擬環境配置
+
+* OpenFlow：1.3 版。
+* controller：1 台。
+* switch：3 台。
+* host：4 台。
+* VLAN 20：h1（00:00:00:00:00:01）、h2（00:00:00:00:00:02）。
+* VLAN 30：h3（00:00:00:00:00:03）、h4（00:00:00:00:00:04）。
+* switch 1 連接 h1（主幹：30、40）。
+* switch 2 連接 h2（主幹：30、40）。
+* switch 3 連接 h3 及 h4（主幹：30、50）。
+* switch 間透過主幹互相連接。
+
+### Mininet 環境（```mininet_env.py```）
+```python
+mininet> net
+h1 h1-eth0:s1-eth1
+h2 h2-eth0:s2-eth1
+h3 h3-eth0:s3-eth1
+h4 h4-eth0:s3-eth2
+s1 lo:  s1-eth1:h1-eth0 s1-eth30:s2-eth30 s1-eth40:s3-eth50
+s2 lo:  s2-eth1:h2-eth0 s2-eth30:s1-eth30 s2-eth40:s3-eth30
+s3 lo:  s3-eth1:h3-eth0 s3-eth2:h4-eth0 s3-eth30:s2-eth40 s3-eth50:s1-eth40
+c0
+```
 ## 運作機制
 
-以下將介紹各段程式的用途。
+以下將介紹各段程式的用途及設計原因。
 
 ### 初始化
 載入配置狀況，並分別存放在以下兩個變數中：
@@ -115,7 +116,7 @@ def switch_features_handler(self, ev):
 	...
 ```
 
-* 設定主幹在經過 table 1 時，可以直接通過，並轉送至 table 2。
+* 設定由主幹傳入的封包在經過 table 1 時，可以直接通過，並轉送至 table 2。
 
 ```python
 @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -155,7 +156,7 @@ def _packet_in_handler(self, ev):
 	...
 ```
 
-* 過濾沒有 VLAN 的封包，但讓來源是管轄內的主機的封包通過（因有可能是 ARP 回覆）。
+* 過濾沒有 VLAN 的封包，但讓來源是管轄內的主機的封包通過（因有可能是 ARP 回覆或請求）。
 
 ```python
 @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
@@ -171,9 +172,11 @@ def _packet_in_handler(self, ev):
 
 ```python
 if 封包不是來自於主幹:
-	1.將來源主機的 MAC address 當作新規則的 Match 條件（eth_dst），加入 table 1 中。並設定在 Match 此規則後，加上對應的 VLAN ID。 
-	2.在table 0 加入規則，阻擋來自於主幹且來源 MAC address 為此的封包（預防 switch 間的迴圈問題）。
+	1.將來源主機的 MAC address 當作新規則的 Match 條件（eth_src），加入 table 1 中。並設定在 Match 此規則後，加上對應的 VLAN ID。 
+	2.在 table 2 中，也是加入 MAC address 當作新規則的 Match 條件，但這次換做是 eth_dst，並加入 VLAN ID 也當作其中一個 Match 條件。目的是為了學習此規則，如往後有目的地是此主機且 VLAN ID 相同的包封時，則可按規則轉送。
+	3.在table 0 加入規則，阻擋來自於主幹且來源 MAC address 為此的封包（預防 switch 間的迴圈問題）。
 ```
+程式碼：
 
 ```python
 @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
@@ -202,6 +205,97 @@ def _packet_in_handler(self, ev):
 	...
 ```
 
+* 判定封包送出方式。邏輯如下：
+
+```python
+if 封包的目的主機在此 switch 中:
+	if 有 VLAN ID:
+		if 封包的 VLAN 與目的主機相同:
+			剔除 VLAN ID，傳送至目的主機
+	else:
+		if 來源主機是否為控管內主機(可能是 ARP 回覆或請求):
+			if 來源及目的主機皆在相同 VLAN:
+				傳送至目的主機
+else:
+	if 目的主機在其他 switch 中:
+		直接由主幹傳出（如果傳入就是由主幹，則略過當初傳入的主幹）
+	
+	if 目的主機都不在目前的監控中:
+		進行 Flooding，找尋目的主機
+```
+
+程式碼：
+
+```python
+@set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+def _packet_in_handler(self, ev):
+...
+	if dst in self.mac_to_port[dpid]:
+
+		if eth_vlan != []:
+			if eth_vlan[0].vid == self.vlan_hosts[dst]:
+				out_port = self.mac_to_port[dpid][dst]
+				out_action = [parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(out_port)]
+		else:
+			if src in self.vlan_hosts:
+				if self.vlan_hosts[src] == self.vlan_hosts[dst]:
+					out_port = self.mac_to_port[dpid][dst]
+					out_action = [parser.OFPActionOutput(out_port)]
+
+	else:
+		to_trunks_tag = False
+		for dp in self.mac_to_port:
+			if dst in self.mac_to_port[dp]:
+				to_trunks_tag = True
+				for the_datapath_trunk in self.trunks[datapath.id]:
+					if the_datapath_trunk != in_port:
+						out_action.append(parser.OFPActionOutput(the_datapath_trunk))
+	
+		if not to_trunks_tag:	
+			out_port = ofproto.OFPP_FLOOD
+			out_action = [parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(out_port)]	
+...
+```
+
+### Port 的狀況改變（有主機脫離）
+
+預防主機脫離時，舊的規則影響整體運作。運作邏輯如下：
+
+```python
+if 狀態改變的 port 屬於某一個管理中的主機：
+	清除 table 0 至 2 中，所有的相關規則
+	清除 self.mac_to_port 中的記錄
+```
+
+程式碼：
+
+```python
+@set_ev_cls(ofp_event.EventOFPPortStateChange, MAIN_DISPATCHER)
+def port_state_change_handler(self, ev):
+...
+	change_port = ev.port_no
+
+	del_mac = None
+	try:
+		for host in self.mac_to_port[datapath.id]:
+			if self.mac_to_port[datapath.id][host] == change_port:
+				print self.mac_to_port
+				table0_match = parser.OFPMatch(eth_src=host)
+				self._del_flow(datapath=datapath,match=table0_match,table=0)
+				table1_match = parser.OFPMatch(eth_src=host)
+				self._del_flow(datapath=datapath,match=table1_match,table=1)
+				table2_match = parser.OFPMatch(eth_dst=host)
+				self._del_flow(datapath=datapath,match=table2_match,table=2)					
+				del_mac = host
+				break
+	except Exception, e:
+		raise e
+
+	if del_mac != None:
+		del self.mac_to_port[datapath.id][del_mac]
+		print self.mac_to_port
+...
+```
 # Version
 
 * Beta
