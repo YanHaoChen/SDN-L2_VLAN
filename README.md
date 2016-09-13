@@ -12,6 +12,31 @@
 
 * 以 table 分層管理規則。（過濾、分配、學習）
 
+## 虛擬環境配置
+
+* controller：1 台。
+* switch：3 台。
+* host：4 台。
+* VLAN 20：h1（00:00:00:00:00:01）、h2（00:00:00:00:00:02）。
+* VLAN 30：h3（00:00:00:00:00:03）、h4（00:00:00:00:00:04）。
+* switch 1 連接 h1（主幹：30、40）。
+* switch 2 連接 h2（主幹：30、40）。
+* switch 3 連接 h3 及 h4（主幹：30、50）。
+* switch 間透過主幹互相連接。
+
+### Mininet 環境
+```python
+mininet> net
+h1 h1-eth0:s1-eth1
+h2 h2-eth0:s2-eth1
+h3 h3-eth0:s3-eth1
+h4 h4-eth0:s3-eth2
+s1 lo:  s1-eth1:h1-eth0 s1-eth30:s2-eth30 s1-eth40:s3-eth50
+s2 lo:  s2-eth1:h2-eth0 s2-eth30:s1-eth30 s2-eth40:s3-eth30
+s3 lo:  s3-eth1:h3-eth0 s3-eth2:h4-eth0 s3-eth30:s2-eth40 s3-eth50:s1-eth40
+c0
+```
+
 ## Table 轉送邏輯
 
 ```python
@@ -36,6 +61,146 @@ else:
 	goto controller
 ```
 
+## 運作機制
+
+以下將介紹各段程式的用途。
+
+### 初始化
+載入配置狀況，並分別存放在以下兩個變數中：
+
+* ```self.vlan_hosts```：主機的 VLAN 資訊，key 為 MAC address，value 為 VLAN ID。
+* ```self.trunks```：switch 的主幹資訊，key 為 Datapath ID，value 為主幹 port Number（以陣列存放）。
+
+
+```python
+def __init__(self, *args, **kwargs):
+...
+	vlans = vlans_set().vlans
+	self.vlan_hosts = vlans['hosts']
+	self.trunks = vlans['trunks']
+...
+```
+
+### 與 switch 連接
+在與switch連接時，建立初步的規則。
+
+* 剔除管轄外的 switch，並取出主幹，存放在```the_datapath_trunks```中。
+
+```python
+@set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+def switch_features_handler(self, ev):
+	...
+	if datapath.id not in self.trunks:
+		print "The datapath is not in the vlan_set."
+		return
+
+	the_datapath_trunks = self.trunks[datapath.id]
+ 
+	if the_datapath_trunks is []:
+		print "This set of datapath doesn't have trunk."
+		return
+	...
+```
+
+* 設定 table 0 的 default 處理動作（轉送至 table 1）。
+
+```python
+@set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+def switch_features_handler(self, ev):
+	...
+	table0_match = None
+	goto_table_1_action = parser.OFPInstructionGotoTable(table_id=1)
+	table0_inst = [goto_table_1_action]
+	self._add_flow(datapath=datapath, match=table0_match , inst=table0_inst, priority=0, table=0)
+	...
+```
+
+* 設定主幹在經過 table 1 時，可以直接通過，並轉送至 table 2。
+
+```python
+@set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+def switch_features_handler(self, ev):
+	...
+	table0_match = None
+	goto_table_1_action = parser.OFPInstructionGotoTable(table_id=1)
+	table0_inst = [goto_table_1_action]
+	self._add_flow(datapath=datapath, match=table0_match , inst=table0_inst, priority=0, table=0)
+	...
+```
+
+* 設定 table 2 在收到封包後，如果沒有對應到的規則，則將封包轉送至 controller。
+
+```python
+@set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+def switch_features_handler(self, ev):
+	...
+	table0_match = None
+	goto_table_1_action = parser.OFPInstructionGotoTable(table_id=1)
+	table0_inst = [goto_table_1_action]
+	self._add_flow(datapath=datapath, match=table0_match , inst=table0_inst, priority=0, table=0)
+	...
+```
+> 此規則，並非一定要加入，因為當有封包沒有對應到任何規則時，也會自動轉往 controller。
+
+### 有未知封包時
+當有未知封包時，處理的方式及原因介紹。
+
+* 取得封包 VLAN 資訊。
+
+```python
+@set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+def _packet_in_handler(self, ev):
+	...
+	eth_vlan = pkt.get_protocols(vlan.vlan)
+	...
+```
+
+* 過濾沒有 VLAN 的封包，但讓來源是管轄內的主機的封包通過（因有可能是 ARP 回覆）。
+
+```python
+@set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+def _packet_in_handler(self, ev):
+	...
+	if not src in self.vlan_hosts:
+		if eth_vlan == []:
+			return
+	...
+```
+
+* 如果封包不是來自於主幹，則代表是與 switch 直接連結的主機。因此，如果主機在管轄範圍內運作邏輯如下:
+
+```python
+if 封包不是來自於主幹:
+	1.將來源主機的 MAC address 當作新規則的 Match 條件（eth_dst），加入 table 1 中。並設定在 Match 此規則後，加上對應的 VLAN ID。 
+	2.在table 0 加入規則，阻擋來自於主幹且來源 MAC address 為此的封包（預防 switch 間的迴圈問題）。
+```
+
+```python
+@set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+def _packet_in_handler(self, ev):
+	...
+	if not in_port in self.trunks[dpid]:
+		# add self into the flow
+		self.mac_to_port[dpid][src] = in_port
+		table1_match = parser.OFPMatch(eth_src=src,vlan_vid=0x0000)
+		table1_push_vlan_action = parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,[parser.OFPActionPushVlan(ETH_TYPE_8021Q),parser.OFPActionSetField(vlan_vid=self.vlan_hosts[src])])
+		table1_inst = [table1_push_vlan_action,parser.OFPInstructionGotoTable(table_id=2)]
+
+		self._add_flow(datapath=datapath, match=table1_match,inst=table1_inst, priority=99,table=1)
+			
+		table2_match = parser.OFPMatch(eth_dst=src,vlan_vid=0x1000 | self.vlan_hosts[src])
+		goto_the_port_actions = parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,[parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(in_port)])
+		table2_inst = [goto_the_port_actions]
+
+		for the_datapath_trunk in self.trunks[datapath.id]:
+			table0_match = parser.OFPMatch(in_port=the_datapath_trunk,eth_src=src)
+			drop_action = parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,[])
+			table0_inst = [drop_action]
+			self._add_flow(datapath=datapath, match=table0_match,inst= table0_inst, table=0)
+		
+		self._add_flow(datapath=datapath, match=table2_match, inst=table2_inst, priority=99, table=2)
+	...
+```
 
 # Version
 
