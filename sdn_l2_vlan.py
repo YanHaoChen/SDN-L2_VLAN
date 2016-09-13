@@ -49,34 +49,34 @@ class sdn_l2_vlan(app_manager.RyuApp):
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser
 		
-		# table 0
 
-		# 0.1.filter broadcast packets at the trunk port of all datapath
-
-		the_datapath_trunks = self.trunks[datapath.id];
-		if the_datapath_trunks is []:
+		# filter datapath
+		if datapath.id not in self.trunks:
 			print "The datapath is not in the vlan_set."
 			return
 
-		# 0.2.pass the filter of table 0
+		the_datapath_trunks = self.trunks[datapath.id]
+ 
+		if the_datapath_trunks is []:
+			print "This set of datapath doesn't have trunk."
+			return
+
+
+		# table 0
+		# 0.1.pass the filter of table 0
 		table0_match = None
 		goto_table_1_action = parser.OFPInstructionGotoTable(table_id=1)
 		table0_inst = [goto_table_1_action]
 		self._add_flow(datapath=datapath, match=table0_match , inst=table0_inst, priority=0, table=0)
 
 		# table 1
-
-		# 1.2.let the trunk pass to table 2
+		# 1.1.let the trunk pass to table 2
 		for the_datapath_trunk in the_datapath_trunks:
 			table1_match = parser.OFPMatch(in_port=the_datapath_trunk)
 			table1_inst = [parser.OFPInstructionGotoTable(table_id=2)]
-			self._add_flow(datapath=datapath, match=table1_match, inst=table1_inst, priority=99, table=1)
-		
-		# 1.3. add vlan tag
-			
+			self._add_flow(datapath=datapath, match=table1_match, inst=table1_inst, priority=99, table=1)			
 
 		# table 2(Like table 2,3,4 of OVS.)
-
 		# 2.1 trigger packect-in to mac learning
 		table2_match = None
 		table2_trigger_peckect_in_action = parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,[parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,ofproto.OFPCML_NO_BUFFER)])
@@ -120,11 +120,9 @@ class sdn_l2_vlan(app_manager.RyuApp):
 
 		self.logger.info("packet in %s %s %s %s %s", dpid, src, dst, in_port, eth_vlan)
 
-		# add self into the flow
-		
 		if not in_port in self.trunks[dpid]:
+			# add self into the flow
 			self.mac_to_port[dpid][src] = in_port
-			print "not trunk"
 			table1_match = parser.OFPMatch(eth_src=src,vlan_vid=0x0000)
 			table1_push_vlan_action = parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,[parser.OFPActionPushVlan(ETH_TYPE_8021Q),
 																							    parser.OFPActionSetField(vlan_vid=self.vlan_hosts[src])])
@@ -150,24 +148,21 @@ class sdn_l2_vlan(app_manager.RyuApp):
 		out_action = []
 
 		if dst in self.mac_to_port[dpid]:
-			out_port = self.mac_to_port[dpid][dst]
-			if not out_port in self.trunks[dpid]:
-				out_action = [parser.OFPActionOutput(out_port)]
-			else:
-				out_action = [parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(out_port)]
+			if src in self.vlan_hosts:
+				if self.vlan_hosts[src] == self.vlan_hosts[dst]:
+					out_port = self.mac_to_port[dpid][dst]
+					out_action = [parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(out_port)]
 
 		else:
 			to_trunks_tag = False
 			for dp in self.mac_to_port:
 				if dst in self.mac_to_port[dp]:
-					print "to trunks"
 					to_trunks_tag = True
 					for the_datapath_trunk in self.trunks[datapath.id]:
 						if the_datapath_trunk != in_port:
 							out_action.append(parser.OFPActionOutput(the_datapath_trunk))
 	
 			if not to_trunks_tag:	
-				print "flooding"
 				out_port = ofproto.OFPP_FLOOD
 				out_action = [parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(out_port)]
 			
