@@ -148,10 +148,16 @@ class sdn_l2_vlan(app_manager.RyuApp):
 		out_action = []
 
 		if dst in self.mac_to_port[dpid]:
-			if src in self.vlan_hosts:
-				if self.vlan_hosts[src] == self.vlan_hosts[dst]:
+
+			if eth_vlan != []:
+				if eth_vlan[0].vid == self.vlan_hosts[dst]:
 					out_port = self.mac_to_port[dpid][dst]
 					out_action = [parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(out_port)]
+			else:
+				if src in self.vlan_hosts:
+					if self.vlan_hosts[src] == self.vlan_hosts[dst]:
+						out_port = self.mac_to_port[dpid][dst]
+						out_action = [parser.OFPActionOutput(out_port)]
 
 		else:
 			to_trunks_tag = False
