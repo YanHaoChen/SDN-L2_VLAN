@@ -209,13 +209,7 @@ def _packet_in_handler(self, ev):
 
 ```python
 if 封包的目的主機在此 switch 中:
-	if 有 VLAN ID:
-		if 封包的 VLAN 與目的主機相同:
-			剔除 VLAN ID，傳送至目的主機
-	else:
-		if 來源主機是否為控管內主機(可能是 ARP 回覆或請求):
-			if 來源及目的主機皆在相同 VLAN:
-				傳送至目的主機
+	代表 VLAN 不符合，或者沒有 VLAN tag -> drop
 else:
 	if 目的主機在其他 switch 中:
 		直接由主幹傳出（如果傳入就是由主幹，則略過當初傳入的主幹）
@@ -231,17 +225,8 @@ else:
 def _packet_in_handler(self, ev):
 ...
 	if dst in self.mac_to_port[dpid]:
-
-		if eth_vlan != []:
-			if eth_vlan[0].vid == self.vlan_hosts[dst]:
-				out_port = self.mac_to_port[dpid][dst]
-				out_action = [parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(out_port)]
-		else:
-			if src in self.vlan_hosts:
-				if self.vlan_hosts[src] == self.vlan_hosts[dst]:
-					out_port = self.mac_to_port[dpid][dst]
-					out_action = [parser.OFPActionOutput(out_port)]
-
+		"""wrong"""
+		return
 	else:
 		to_trunks_tag = False
 		for dp in self.mac_to_port:
