@@ -209,7 +209,7 @@ def _packet_in_handler(self, ev):
 
 ```python
 if 封包的目的主機在此 switch 中:
-	代表 VLAN 不符合，或者沒有 VLAN tag -> drop
+	代表 VLAN 不符合 -> drop
 else:
 	if 目的主機在其他 switch 中:
 		直接由主幹傳出（如果傳入就是由主幹，則略過當初傳入的主幹）
