@@ -151,15 +151,25 @@ class sdn_l2_vlan(app_manager.RyuApp):
 			"""drop"""
 			return
 		else:
-			to_trunks_tag = False
-			for dp in self.mac_to_port:
-				if dst in self.mac_to_port[dp]:
-					to_trunks_tag = True
-					for the_datapath_trunk in self.trunks[datapath.id]:
-						if the_datapath_trunk != in_port:
-							out_action.append(parser.OFPActionOutput(the_datapath_trunk))
-	
-			if not to_trunks_tag:	
+			if dst != 'ff:ff:ff:ff:ff:ff':
+				if dst in self.vlan_hosts:
+					if self.vlan_hosts[src] != self.vlan_hosts[dst]:
+						"""wrong"""
+						return
+					else:
+						to_trunks_tag = False
+						for dp in self.mac_to_port:
+							if dst in self.mac_to_port[dp]:
+								to_trunks_tag = True
+								for the_datapath_trunk in self.trunks[datapath.id]:
+									if the_datapath_trunk != in_port:
+										out_action.append(parser.OFPActionOutput(the_datapath_trunk))
+						
+						if not to_trunks_tag:
+							return
+				else:
+					return
+			else:	
 				out_port = ofproto.OFPP_FLOOD
 				out_action = [parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(out_port)]
 			

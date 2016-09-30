@@ -208,13 +208,18 @@ def _packet_in_handler(self, ev):
 * 判定封包送出方式。邏輯如下：
 
 ```python
-if 封包的目的主機在此 switch 中:
+if 目的主機在此 switch 中:
 	代表 VLAN 不符合 -> drop
 else:
-	if 目的主機在其他 switch 中:
-		直接由主幹傳出（如果傳入就是由主幹，則略過當初傳入的主幹）
-	
-	if 目的主機都不在目前的監控中:
+	if 不是廣播封包:
+		if 目的主機在管轄範圍內:
+			if 目的主機在其他 switch 中:
+				直接由主幹傳出（如果傳入就是由主幹，則略過當初傳入的主幹）
+			else:
+				drop
+		else:
+			drop
+	else:
 		進行 Flooding，找尋目的主機
 ```
 
@@ -225,21 +230,31 @@ else:
 def _packet_in_handler(self, ev):
 ...
 	if dst in self.mac_to_port[dpid]:
-		"""wrong"""
+		"""drop"""
 		return
 	else:
-		to_trunks_tag = False
-		for dp in self.mac_to_port:
-			if dst in self.mac_to_port[dp]:
-				to_trunks_tag = True
-				for the_datapath_trunk in self.trunks[datapath.id]:
-					if the_datapath_trunk != in_port:
-						out_action.append(parser.OFPActionOutput(the_datapath_trunk))
-	
-		if not to_trunks_tag:	
+		if dst != 'ff:ff:ff:ff:ff:ff':
+			if dst in self.vlan_hosts:
+				if self.vlan_hosts[src] != self.vlan_hosts[dst]:
+					"""drop"""
+					return
+				else:
+					to_trunks_tag = False
+					for dp in self.mac_to_port:
+						if dst in self.mac_to_port[dp]:
+							to_trunks_tag = True
+							for the_datapath_trunk in self.trunks[datapath.id]:
+								if the_datapath_trunk != in_port:
+									out_action.append(parser.OFPActionOutput(the_datapath_trunk))
+						
+					if not to_trunks_tag:
+						return
+			else:
+				return
+		else:	
 			out_port = ofproto.OFPP_FLOOD
-			out_action = [parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(out_port)]	
-...
+			out_action = [parser.OFPActionPopVlan(ETH_TYPE_8021Q),parser.OFPActionOutput(out_port)]
+	...
 ```
 
 ### Port 的狀況改變（有主機脫離）
