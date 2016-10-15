@@ -34,6 +34,8 @@ if '__main__' == __name__:
 	c0.start()
 	s1.start([c0])
 	s2.start([c0])
+	s3.start([c0])
+	s4.start([c0])
 
 	net.terms.append(makeTerm(s1))
 	net.terms.append(makeTerm(s2))
