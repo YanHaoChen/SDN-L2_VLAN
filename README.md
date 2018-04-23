@@ -1,5 +1,7 @@
 # 以 RYU 實現自動化 VLAN 分配、管理
 
+> 優化版:[SDN-vlan_v2](https://github.com/YanHaoChen/SDN-vlan_v2)
+
 使用 RYU 對多 switch 進行自動化 VLAN 分配及管理。管理者只需要透過三項環境已知條件（VLAN 對應的主幹、主機的 MAC address 及對應 VLAN ID），即可將 VLAN 管理規則下達至 switch，自動化分配主機所屬 VLAN 及封包配送方式。
 
 ## 特性
