@@ -55,6 +55,8 @@ class sdn_l2_vlan(app_manager.RyuApp):
 			print "The datapath is not in the vlan_set."
 			return
 
+		self.mac_to_port.setdefault(datapath.id, {})
+		
 		the_datapath_trunks = self.trunks[datapath.id]
  
 		if the_datapath_trunks is []:
@@ -109,8 +111,6 @@ class sdn_l2_vlan(app_manager.RyuApp):
 		src = eth.src
 
 		dpid = datapath.id
-
-		self.mac_to_port.setdefault(dpid, {})
 
 		#find vlan
 
